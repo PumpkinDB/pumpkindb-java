@@ -1,0 +1,2 @@
+include 'todolist'
+rootProject.name = 'pumpkindb-examples'

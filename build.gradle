@@ -1,0 +1,39 @@
+plugins {
+    id "com.github.hierynomus.license" version "0.13.1"
+}
+
+apply plugin: 'java'
+apply plugin: 'idea'
+apply plugin: 'maven-publish'
+
+license {
+    header project.file('LICENSE-HEADER')
+}
+
+ext {
+    nettyVersion = '4.1.9.Final'
+}
+
+repositories {
+   mavenCentral()
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+        }
+    }
+}
+
+dependencies {
+
+    // Netty
+    compile "io.netty:netty-common:${nettyVersion}"
+    compile "io.netty:netty-buffer:${nettyVersion}"
+    compile "io.netty:netty-transport:${nettyVersion}"
+    compile "io.netty:netty-codec:${nettyVersion}"
+    compile "io.netty:netty-handler:${nettyVersion}"
+
+    testCompile 'junit:junit:4.12'
+}

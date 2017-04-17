@@ -1,0 +1,32 @@
+plugins {
+    id "com.github.hierynomus.license" version "0.13.1"
+}
+
+allprojects {
+    apply plugin: 'idea'
+}
+
+subprojects {
+    apply plugin: 'license'
+    apply plugin: 'java'
+    apply plugin: 'application'
+
+    license {
+        header project.file('../../LICENSE-HEADER')
+    }
+
+    repositories {
+        mavenLocal()
+        mavenCentral()
+    }
+
+    dependencies {
+        compile 'org.pumpkindb:pumpkindb-client:0.1'
+
+        testCompile 'junit:junit:4.12'
+    }
+
+}
+
+
+

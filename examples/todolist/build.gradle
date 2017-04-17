@@ -1,0 +1,5 @@
+mainClassName = 'org.pumpkindb.examples.todolist.Main'
+
+dependencies {
+    compile 'com.googlecode.lanterna:lanterna:3.0.0-rc1'
+}
