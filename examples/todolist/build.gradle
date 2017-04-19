@@ -1,5 +1,12 @@
 mainClassName = 'org.pumpkindb.examples.todolist.Main'
+ext {
+    nettyVersion = '4.1.9.Final'
+}
 
 dependencies {
     compile 'com.googlecode.lanterna:lanterna:3.0.0-rc1'
+    compile "io.netty:netty-buffer:${nettyVersion}"
+    compile "io.netty:netty-common:${nettyVersion}"
+    compile "io.netty:netty-transport:${nettyVersion}"
+    compile "io.netty:netty-handler:${nettyVersion}"
 }
