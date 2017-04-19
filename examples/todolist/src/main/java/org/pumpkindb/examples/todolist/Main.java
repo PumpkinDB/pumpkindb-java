@@ -12,20 +12,23 @@ import com.googlecode.lanterna.gui2.*;
 import com.googlecode.lanterna.gui2.dialogs.MessageDialog;
 import com.googlecode.lanterna.gui2.dialogs.MessageDialogBuilder;
 import com.googlecode.lanterna.gui2.dialogs.TextInputDialog;
+import com.googlecode.lanterna.gui2.table.Table;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.Terminal;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import org.pumpkindb.*;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.UUID;
+import java.nio.charset.Charset;
+import java.text.SimpleDateFormat;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -78,10 +81,7 @@ public class Main {
         @Override public void encode(ByteBuf buffer) {
             Encodables script = new Encodables(Arrays.asList(
                     new Data(PREFIX),
-                    new Instruction("HLC"),
-                    new Instruction("CONCAT"),
-                    new Instruction("SWAP"),
-                    new Instruction("ASSOC")
+                    new Instructions("HLC CONCAT 2DUP SWAP ASSOC HLC ROT SWAP CONCAT SWAP ASSOC")
             ));
             script.encode(buffer);
         }
@@ -96,16 +96,9 @@ public class Main {
 
         @Override public void encode(ByteBuf buffer) {
             Encodables script = new Encodables(Arrays.asList(
+                    new Instruction("OVER"),
                     new Data(PREFIX),
-                    // uuid value prefix
-                    new Instruction("ROT"),
-                    // value prefix uuid
-                    new Instruction("HLC"),
-                    new Instruction("CONCAT"),
-                    new Instruction("CONCAT"),
-                    // value key
-                    new Instruction("SWAP"),
-                    new Instruction("ASSOC")
+                    new Instructions("SWAP HLC CONCAT CONCAT DUP -ROT SWAP ASSOC SWAP HLC CONCAT SWAP ASSOC")
             ));
             script.encode(buffer);
         }
@@ -141,14 +134,9 @@ public class Main {
 
     static class Handler implements MessageHandler {
 
-        private final UUID uuid = UUID.randomUUID();
         private final Consumer<List<Encodable>> callback;
 
         Handler(Consumer<List<Encodable>> callback) {this.callback = callback;}
-
-        public UUID getUuid() {
-            return uuid;
-        }
 
         @Override public void accept(ByteBuf byteBuf) {
             List<Encodable> encodables = new ArrayList<>();
@@ -158,14 +146,47 @@ public class Main {
 
     }
 
-    private static Encodable fetchTodoList(Handler handler) {
+
+    static class RoutingHandler implements MessageHandler {
+
+        private final UUID uuid = UUID.randomUUID();
+        private final Map<String, Handler> handlers = new HashMap<>();
+
+        public UUID getUuid() {
+            return uuid;
+        }
+
+        public void registerHandler(String key, Handler handler) {
+            handlers.put(key, handler);
+        }
+
+        public void unregisterHandler(String key) {
+            handlers.remove(key);
+        }
+
+        @Override public void accept(ByteBuf byteBuf) {
+            BinaryParsingIterator iterator = new BinaryParsingIterator(byteBuf);
+            if (iterator.hasNext()) {
+                Data key = (Data) iterator.next();
+                Handler handler = handlers.get(new String(key.getData()));
+                if (handler != null) {
+                    handler.accept(byteBuf);
+                }
+            }
+        }
+
+    }
+
+
+    private static Encodable fetchTodoList(UUID uuid) {
         return new Encodables(Arrays.asList(
-                new Uuid(handler.getUuid()),
+                new Uuid(uuid),
                 new Instruction("SUBSCRIBE"),
                 new Closure(
                         new Utf8String("AddedTodoItem"),
                         new Closure(
-                                new Instructions("CURSOR/VAL DUP DUP CURSOR DUP ROT"),
+                                new Utf8String("Items"), // routing key
+                                new Instructions("SWAP CURSOR/VAL DUP DUP CURSOR DUP ROT"),
                                 new Utf8String("ChangedTodoItem"),
                                 new Instructions("SWAP CONCAT CURSOR/SEEKLAST DROP CURSOR/VAL"),
                                 new Instructions("SWAP"),
@@ -174,9 +195,31 @@ public class Main {
                                 new Closure(new Instructions("CURSOR/VAL")),
                                 new Closure(new Instruction("DROP"), new Bool(false)),
                                 new Instructions("IFELSE"),
-                                new UnsignedInteger(3),
+                                new UnsignedInteger(4),
                                 new Instruction("WRAP"),
-                                new Uuid(handler.getUuid()),
+                                new Uuid(uuid),
+                                new Instruction("PUBLISH"),
+                                new Bool(true)
+                        ),
+                        new Instruction("CURSOR/DOWHILE-PREFIXED")
+                ),
+                new Instruction("READ"),
+                new Instruction("UNSUBSCRIBE")
+        ));
+    }
+
+    private static Encodable eventLog(UUID itemUuid, UUID routingUuid) {
+        return new Encodables(Arrays.asList(
+                new Uuid(routingUuid),
+                new Instruction("SUBSCRIBE"),
+                new Closure(
+                        new Uuid(itemUuid),
+                        new Closure(
+                                new Utf8String("EventLog"), // routing key
+                                new Instructions("SWAP DUP CURSOR/KEY SWAP CURSOR/VAL DUP RETR"),
+                                new UnsignedInteger(4),
+                                new Instruction("WRAP"),
+                                new Uuid(routingUuid),
                                 new Instruction("PUBLISH"),
                                 new Bool(true)
                         ),
@@ -191,10 +234,10 @@ public class Main {
         return new DefineInstruction(new Closure(
                 new Closure(
                         // UUID t/f
-                        new Instruction("SWAP"),
+                        new Instruction("OVER"),
                         new Utf8String("ChangedTodoStatus"),
-                        new Instructions("SWAP HLC CONCAT CONCAT"),
-                        new Instructions("SWAP ASSOC COMMIT")
+                        new Instructions("SWAP HLC CONCAT CONCAT DUP -ROT SWAP ASSOC SWAP HLC CONCAT SWAP ASSOC"),
+                        new Instruction("COMMIT")
                 ),
                 new Instructions("WRITE")
         ), "TODO/MARK");
@@ -208,6 +251,14 @@ public class Main {
                 ),
                 new Instruction("WRITE")
         ), "TODO/NEW");
+    }
+
+    private static boolean hasPrefix(byte[] b, String prefix) {
+        ByteBuf bb = Unpooled.wrappedBuffer(b);
+        return (bb.readableBytes() > prefix.length()) &&
+               (bb.readCharSequence(prefix.length(), Charset.defaultCharset()).toString()
+                        .contentEquals(prefix));
+
     }
 
     public static void main(String[] args) throws IOException, ExecutionException, InterruptedException {
@@ -231,16 +282,25 @@ public class Main {
 
 
         // Create window to hold the panel
-        BasicWindow window = new BasicWindow("TODO [up/down to navigate, space/enter — toggle, n — new item, q — " +
-                                                     "quit]");
+        BasicWindow window = new BasicWindow("TODO");
         window.setHints(Arrays.asList(Window.Hint.CENTERED, Window.Hint.EXPANDED));
 
         CheckBoxList<String> checkBoxList = new CheckBoxList<>();
-        window.setComponent(checkBoxList);
+        Label help = new Label("[up/down] navigate [space/enter] toggle [n] new item [l] event log\n" +
+                                     "[q] quit");
+        Panel helpPanel = new Panel();
+        helpPanel.addComponent(help);
+
+        Panel panel = new Panel(new BorderLayout());
+        panel.addComponent(checkBoxList, BorderLayout.Location.CENTER);
+        panel.addComponent(helpPanel.withBorder(Borders.singleLine("Help")), BorderLayout.Location.BOTTOM);
+
+        window.setComponent(panel);
+        window.setFocusedInteractable(checkBoxList);
 
         List<UUID> itemMapping = new ArrayList<>();
 
-        Handler handler = new Handler(encodables -> {
+        Handler itemListHandler = new Handler(encodables -> {
 
             ArrayList<Encodable> e = new ArrayList<>(encodables);
 
@@ -258,7 +318,11 @@ public class Main {
             }
 
         });
-        Client client = new Client("localhost", handler);
+
+        RoutingHandler routingHandler = new RoutingHandler();
+        routingHandler.registerHandler("Items", itemListHandler);
+
+        Client client = new Client("localhost", routingHandler);
         client.connect();
 
         checkBoxList.addListener((itemIndex, checked) -> {
@@ -275,7 +339,7 @@ public class Main {
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            client.send(fetchTodoList(handler));
+            client.send(fetchTodoList(routingHandler.getUuid()));
         });
 
         window.addWindowListener(new WindowListenerAdapter() {
@@ -296,16 +360,71 @@ public class Main {
                         } catch (InterruptedException e) {
                             e.printStackTrace();
                         }
-                        client.send(fetchTodoList(handler));
+                        client.send(fetchTodoList(routingHandler.getUuid()));
                     }
                 }
                 if (keyStroke.getCharacter() == Character.valueOf('q')) {
                     window.close();
                 }
+                if (keyStroke.getCharacter() == Character.valueOf('l')) {
+                    BasicWindow window = new BasicWindow("Event log");
+                    window.setHints(Arrays.asList(Window.Hint.CENTERED, Window.Hint.EXPANDED));
+
+                    Panel panel = new Panel(new BorderLayout());
+                    Table<String> table = new Table<>("Timestamp", "What happened");
+
+                    routingHandler.registerHandler("EventLog", new Handler(encodables -> {
+                        Data key = (Data) encodables.remove(0);
+                        Data reference = (Data) encodables.remove(0);
+                        Data value = (Data) encodables.remove(0);
+
+                        // Parse key
+                        ByteBuf bb = Unpooled.wrappedBuffer(key.getData());
+                        bb.skipBytes(16); // uuid
+                        bb.skipBytes(4); // HLC epoch
+                        byte[] ts = new byte[8];
+                        bb.readBytes(ts); // timestamp
+
+                        long ms = TimeUnit.MILLISECONDS
+                                .convert(new BigInteger(ts).longValue(), TimeUnit.NANOSECONDS);
+                        Date date = new Date(ms);
+
+                        // Parse reference
+                        String event = "Unknown";
+
+                        if (hasPrefix(reference.getData(), "AddedTodoItem")) {
+                            event = "Item added";
+                        }
+
+                        if (hasPrefix(reference.getData(), "ChangedTodoItem")) {
+                            event = "Item changed to: " + new String(value.getData());
+                        }
+
+                        if (hasPrefix(reference.getData(), "ChangedTodoStatus")) {
+                            boolean done = value.getData()[0] == 1;
+                            event = "Item marked as " + (done ? "done" : "not done");
+                        }
+
+
+                        String formattedDate = new SimpleDateFormat("EEE MMM d yyyy h:mm a", Locale.ENGLISH)
+                                .format(date);
+
+                        table.getTableModel().addRow(formattedDate, event);
+                    }));
+
+                    client.send(eventLog(itemMapping.get(checkBoxList.getSelectedIndex()), routingHandler.getUuid()));
+
+                    panel.addComponent(table, BorderLayout.Location.CENTER);
+                    panel.addComponent(new Button("Close", window::close), BorderLayout.Location.BOTTOM);
+
+                    window.setComponent(panel);
+                    gui.addWindowAndWait(window);
+                }
             }
         });
-//        client.send(new StackCollectingProgram(new Closure(fetchTodoList(handler))));
-        client.send(fetchTodoList(handler));
+
+//        client.send(new StackCollectingProgram(new Closure(fetchTodoList(itemListHandler))));
+        client.send(fetchTodoList(routingHandler.getUuid()));
 
         gui.addWindowAndWait(window);
 

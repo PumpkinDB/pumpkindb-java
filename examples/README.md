@@ -8,3 +8,4 @@ gradle clean installDist && \
 ```
 
 ![TodoList](todolist.png)
+![TodoList event log](todolist2.png)
