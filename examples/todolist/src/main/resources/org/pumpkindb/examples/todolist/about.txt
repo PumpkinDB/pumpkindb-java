@@ -1,0 +1,21 @@
+How does this work?
+===================
+
+Event-specific journals
+~~~~~~~~~~~~~~~~~~~~~~~
+
+There are three event types:
+
+AddedTodoItem
+-------------
+
+These events signify an addition of a new item.They are recorded in
+PumpkinDB as the key/value pair of this format:
+
++---------------+---------------+               +-------------+
+|               |               |               |             |
+| AddedTodoItem | HLC timestamp +--------------->     UUID    |
+|               |               |               |             |
++---------------+---------------+               +-------------+
+     prefix          ordering
+

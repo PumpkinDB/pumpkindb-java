@@ -7,6 +7,7 @@
  */
 package org.pumpkindb.examples.todolist;
 
+import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.gui2.*;
 import com.googlecode.lanterna.gui2.dialogs.MessageDialog;
@@ -33,7 +34,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 public class Main {
-
 
     static class StackCollectingProgram implements Encodable {
         private final Encodable program;
@@ -265,6 +265,7 @@ public class Main {
 
         Terminal terminal = new DefaultTerminalFactory().createTerminal();
         TerminalScreen screen = new TerminalScreen(terminal);
+        TerminalSize terminalSize = terminal.getTerminalSize();
 
         screen.startScreen();
 
@@ -287,7 +288,7 @@ public class Main {
 
         CheckBoxList<String> checkBoxList = new CheckBoxList<>();
         Label help = new Label("[up/down] navigate [space/enter] toggle [n] new item [l] event log\n" +
-                                     "[q] quit");
+                                     "[?] about [q] quit");
         Panel helpPanel = new Panel();
         helpPanel.addComponent(help);
 
@@ -366,6 +367,12 @@ public class Main {
                 if (keyStroke.getCharacter() == Character.valueOf('q')) {
                     window.close();
                 }
+
+                if (keyStroke.getCharacter() == Character.valueOf('?')) {
+                    BasicWindow aboutWindow = new AboutWindow(terminalSize);
+                    gui.addWindowAndWait(aboutWindow);
+                }
+
                 if (keyStroke.getCharacter() == Character.valueOf('l')) {
                     BasicWindow window = new BasicWindow("Event log");
                     window.setHints(Arrays.asList(Window.Hint.CENTERED, Window.Hint.EXPANDED));
